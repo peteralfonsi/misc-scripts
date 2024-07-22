@@ -1,4 +1,59 @@
 files = [
+    "final_S1.txt", 
+    "final_S2.txt", 
+    "final_S3.txt", 
+    "final_S4.txt",
+    "final_S5.txt", 
+    "final_S6.txt", 
+    "final_HC1.txt", 
+    "final_HC2.txt",
+    "final_HC3.txt",
+    "final_HC4.txt",
+    "final_LR1.txt", 
+    "final_LR2.txt",
+    "final_HHC1.txt", 
+    "final_HHC2.txt",
+    "final_HHC3.txt",
+    "final_HHC4.txt",
+    "final_PT1.txt", 
+    "final_PT2.txt",
+    "final_PT3.txt",
+    "final_PT4.txt",
+    "final_IN1.txt", 
+    "final_IN2.txt", 
+    "final_IN3.txt",
+    "final_DCD1.txt", 
+    "final_DCD2.txt", 
+    "final_DCD3.txt",
+    "final_KS1.txt", 
+    "final_KS2.txt", 
+    "final_KS3.txt",
+    "final_EWC1.txt",
+    "final_EWC2.txt",
+    "final_EWC3.txt",
+    "final_EWC4.txt"
+    ]
+
+#["final_HC1.txt", "final_HC2.txt","final_HC3.txt","final_HC4.txt"]
+
+#["final_S1.txt", "final_S2.txt", "final_S3.txt", "final_S4.txt", "final_S5.txt", "final_S6.txt"]
+
+#["tc_on_half_concurrency_03.txt", "tc_on_half_concurrency_07.txt", "tc_off_half_concurrency_03.txt", "tc_off_half_concurrency_07.txt"]
+
+
+#["tc_on_03.txt", "tc_on_07.txt", "tc_off_03.txt", "tc_off_07.txt"]
+
+'''[
+    "tc_07_segmented_lock_change_rerun.txt", 
+    "tc_07_tsc_lock_per_key.txt", 
+    "tc_07_with_query_recompute_moved_out.txt", 
+    "tc_07_segmented_lock_change_rerun.txt", 
+    "non_tc_07_cache_optimize_removal_flow.txt", 
+    "non_tc_07_main.txt", 
+]'''
+
+#["non_tc_03_lock_diagnostic.txt", "tc_03_threadlocal_lock_diagnostic.txt", "tc_03_lock_per_key_and_cia.txt", "tc_03_cia_only.txt", "tc_03_final_segmented_locks.txt", "tc_03_no_locks.txt"] #["main_03.txt", "tiered_03.txt"]
+'''[
     "tiered_00.txt",
     "tiered_01.txt",
     "tiered_03.txt",
@@ -15,7 +70,7 @@ files = [
     "main_01.txt",
     "main_03.txt",
     "main_065.txt",
-] 
+]'''
 
 '''"tiered_jar_disk_off_rf00.txt", 
     "tiered_jar_disk_off_rf01.txt", 
