@@ -4,15 +4,15 @@
 yes | sudo yum install git python3-pip java-17-amazon-corretto-devel
 
 # check out appropriate repos and branches 
-cd ~
+cd /home/ec2-user
 yes | rm -r os_repo
 mkdir os_repo && cd os_repo && git clone https://github.com/peteralfonsi/OpenSearch.git
 cd OpenSearch && git checkout benchmark-main
-cd ~ 
+cd /home/ec2-user
 yes | rm -r osb_core
 mkdir osb_core && cd osb_core && git clone https://github.com/peteralfonsi/opensearch-benchmark.git
 cd opensearch-benchmark && git checkout zipf-alpha-parameter
-cd ~
+cd /home/ec2-user
 yes | rm -r osb
 mkdir osb && cd osb && git clone https://github.com/peteralfonsi/opensearch-benchmark-workloads.git
 # NOTE: does not check out a particular branch for osb workloads as this is benchmark-dependent! 
@@ -23,13 +23,13 @@ yes | pip uninstall opensearch-benchmark
 # setup to build osb from source
 # install pyenv
 curl https://pyenv.run | bash
-cat << 'EOF' >> ~/.bashrc
+cat << 'EOF' >> /home/ec2-user/.bashrc
 export PYENV_ROOT="$HOME/.pyenv"
 [[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
 eval "$(pyenv virtualenv-init -)"
 EOF
-source ~/.bashrc
+source /home/ec2-user/.bashrc
 
 # install docker
 yes | sudo yum install docker
@@ -42,7 +42,7 @@ chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 yes | sudo yum install make patch gcc zlib-devel openssl-devel libffi-devel readline-devel sqlite-devel ncurses-devel xz-devel tk-devel
 
 # build osb 
-cd ~/osb_core/opensearch-benchmark
+cd /home/ec2-user/osb_core/opensearch-benchmark
 make prereq
 make install
 source .venv/bin/activate
@@ -51,9 +51,9 @@ source .venv/bin/activate
 rm jstack-outputs/*
 
 # configure benchmark.ini to use the correct metric store 
-rm ~/.benchmark/benchmark.ini 
-mkdir -p ~/.benchmark
-cat << 'EOF' >> ~/.benchmark/benchmark.ini
+rm /home/ec2-user/.benchmark/benchmark.ini 
+mkdir -p /home/ec2-user/.benchmark
+cat << 'EOF' >> /home/ec2-user/.benchmark/benchmark.ini
 [meta]
 config.version = 17
 
