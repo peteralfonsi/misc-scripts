@@ -7,6 +7,8 @@ from collections import deque
 import queue
 import random
 import hashlib
+from datetime import datetime
+
 
 cache_size_kb = 40960 #81920 # 1 MB for larger scale test #5120
 cheap_query_size_kb = 0.6 # each cheap query takes up 600 B
@@ -29,11 +31,14 @@ def get_value_size(value):
 
 # The cache is a deque. More frequently used items to the left, least frequent to the right.
 class HeapTier:
-    def __init__(self, max_size):
+    def __init__(self, max_size, use_promotion=False, promotion_threshold=5):
         self.deque = deque()
         self.set = set() # use set to quickly look up presence of items. Contains the same values as the deque
         self.size_internal = 0
         self.max_size = max_size
+        self.hit_freqs = {}
+        self.use_promotion = use_promotion
+        self.promotion_threshold = promotion_threshold # if a key has been hit this many times since it last entered the cache, get_and_add will return  (does )
 
     def get_and_add(self, value, evict_max_one=False, evict_none=False):
         # Get the value, add it if not present
@@ -43,6 +48,7 @@ class HeapTier:
             self.deque.remove(value)
             self.deque.appendleft(value) # append to left to mark as recently used
             self.set.add(value)
+
             return True, [] # true -> hit
         #except ValueError:
         else:
@@ -55,16 +61,29 @@ class HeapTier:
                 return False, []
             while self.size_internal > self.max_size:
                 removed = self.deque.pop()
-                self.set.remove(removed)
-                self.size_internal -= get_value_size(removed)
+                self.remove_internal(removed)
                 removed_list.append(removed)
                 if evict_max_one: 
                     break # for use in SLRU
                 #print("Removed value, new size = {}".format(self.size))
             return False, removed_list
+        
+    def remove_internal(self, removed): 
+        self.set.remove(removed)
+        self.size_internal -= get_value_size(removed)
+        self.hit_freqs[removed] = 0
+
+    def check_promote_value(self, value): 
+        if self.use_promotion and self.hit_freqs[value] >= self.promotion_threshold:
+            self.remove_internal(value)
+            self.deque.remove(value)
+            return True
+        return False
+
 
     def contains(self, value):
-        # Check for presence of value, dont add it if not present
+        # Check for presence of value, dont add it if not present. Increment hit count. 
+        self.hit_freqs[value] = self.hit_freqs.get(value, 0) + 1
         return value in self.set
 
     def num_entries(self):
@@ -122,7 +141,10 @@ class CaffeineHeapTier:
                     #print("check!")
                 else: 
                     assert len(main_evicted) == 0
-            all_evicted.append(victim)
+            if victim is not None: 
+                all_evicted.append(victim)
+                #print("Victim is None!!")
+            
         return was_in_main_cache, all_evicted
             
     def contains(self, value): 
@@ -361,6 +383,7 @@ def get_spillover(value, heap_tier, disk_tier, approximate_policy=False):
     # was_heap_hit, evicted = heap_tier.get(value)
 
     # check for presence without adding it if it's not there
+    was_promotion = False
     is_in_heap = heap_tier.contains(value)
     if is_in_heap:
         # now actually get it (triggering evictions possibly)
@@ -369,21 +392,45 @@ def get_spillover(value, heap_tier, disk_tier, approximate_policy=False):
             # Attempting to simulate effects of 10 ms policy where cheap queries basically never reach disk tier
             query_type = evicted_value.split(".")[-1]
             if query_type in expensive_queries or not approximate_policy:
-                disk_tier.add(evicted_value)
-        return "heap", evicted
+                if type(disk_tier) is DiskTier: 
+                    disk_tier.add(evicted_value)
+                else: 
+                    disk_tier.get_and_add(evicted_value)
+        return "heap", evicted, was_promotion
     else:
         # check if it's in the disk tier. If not, its a miss everywhere, and add it to the heap tier
-        is_in_disk, _ = disk_tier.get(value)
+        if type(disk_tier) is DiskTier: 
+            is_in_disk, _ = disk_tier.get(value)
+        else: 
+            is_in_disk = disk_tier.contains(value) # increments internal hit counter
+
+        # check for if we should promote  
         if is_in_disk:
-            return "disk", []
+            promoted = disk_tier.check_promote_value(value)
+            # if promoted, manually add the promoted value into the heap tier, triggering another potential round of evictions into the disk tier 
+            if promoted: 
+                _, evicted = heap_tier.get_and_add(value)
+                for evicted_value in evicted:
+                    # Attempting to simulate effects of 10 ms policy where cheap queries basically never reach disk tier
+                    query_type = evicted_value.split(".")[-1]
+                    if query_type in expensive_queries or not approximate_policy:
+                        if type(disk_tier) is DiskTier: 
+                            disk_tier.add(evicted_value)
+                        else: 
+                            disk_tier.get_and_add(evicted_value)
+                was_promotion = True
+            return "disk", [], was_promotion
         else:
             _, evicted = heap_tier.get_and_add(value)
             for evicted_value in evicted:
                 # Attempting to simulate effects of 10 ms policy where cheap queries basically never reach disk tier
                 query_type = evicted_value.split(".")[-1]
                 if query_type in expensive_queries or not approximate_policy:
-                    disk_tier.add(evicted_value)
-            return None, evicted
+                    if type(disk_tier) is DiskTier: 
+                        disk_tier.add(evicted_value)
+                    else: 
+                        disk_tier.get_and_add(evicted_value)
+            return None, evicted, was_promotion
 
 def get_spillover_with_promotion(value, heap_tier, disk_tier):
     # returns "heap" or "disk" if hits on those, otherwise returns None
@@ -442,25 +489,31 @@ def update_stats(result, stats, has_disk_tier=True):
         stats.heap_hits += 1
 
 
-def test_spillover_cache(rf, repeat_supplier, num_iter_cheap, num_iter_expensive, use_promotion=False, uses_batching=False, use_caffeine=False, approximate_policy=False):
+def test_spillover_cache(rf, repeat_supplier, num_iter_cheap, num_iter_expensive, use_promotion=False, uses_batching=False, use_caffeine=False, approximate_policy=False, disk_evicts=False, disk_size_kb=0, promotion_threshold=5):
     heap_tier = HeapTier(cache_size_kb)
     if use_caffeine: 
         # estimate W / C as ?? If W is meant to be the universe size, roughly 
         reset_thresh = (num_iter_cheap * cheap_query_size_kb + num_iter_expensive * expensive_query_size_kb) / cache_size_kb
         heap_tier = CaffeineHeapTier(cache_size_kb, reset_thresh, filter_k = 100, doorkeeper_k = 100)
     disk_tier = DiskTier()
-    if use_promotion:
+    '''if use_promotion:
         if uses_batching:
             disk_tier = DiskTier(uses_promotion=True, H=500, X=2, promotes_in_batches=True, batch_size=100)
         else:
-            disk_tier = DiskTier(uses_promotion=True, H=500, X=2)
+            disk_tier = DiskTier(uses_promotion=True, H=500, X=2)'''
+    if disk_evicts: 
+        print("Creating LRU evicting disk tier with size {} kb".format(disk_size_kb))
+        disk_tier = HeapTier(disk_size_kb, use_promotion=use_promotion, promotion_threshold=promotion_threshold) # Note use_promotion does NOT work unless disk is implemented by HeapTier (LRU)
     stats = SpilloverStats()
 
     # keep track of how many times things were hits on disk -
     # Sagar's theory would require at least 3 (spills to disk, hit on disk, which would otherwise have pulled back into heap, then another hit)
 
-    disk_hit_freq_map = {} # debug only
+    heap_hit_freq_map = {}
+    disk_hit_freq_map = {} 
+    total_query_freq_map = {}
     cheap_mult = int(num_iter_cheap / num_iter_expensive) # should be an int before rounding
+    print("CHEAP MULT:", cheap_mult)
     for i in range(num_iter_expensive):
         iter_values = []
         for cheap_query_type in cheap_queries:
@@ -471,21 +524,29 @@ def test_spillover_cache(rf, repeat_supplier, num_iter_cheap, num_iter_expensive
 
         random.shuffle(iter_values)
         for value in iter_values:
-            if use_promotion:
+            '''if use_promotion:
                 result, evicted, num_promoted = get_spillover_with_promotion(value, heap_tier, disk_tier)
-                stats.promotions += num_promoted
-            else:
-                result, evicted = get_spillover(value, heap_tier, disk_tier, approximate_policy=approximate_policy)
-            '''if result == "disk":
-                if value in disk_hit_freq_map:
-                    disk_hit_freq_map[value] += 1
-                else:
-                    disk_hit_freq_map[value] = 1'''
+                stats.promotions += num_promoted'''
+            #else:
+            result, evicted, was_promotion = get_spillover(value, heap_tier, disk_tier, approximate_policy=approximate_policy)
+            if was_promotion: 
+                stats.promotions += 1
+            
+            if result == "disk":
+                disk_hit_freq_map[value] = disk_hit_freq_map.get(value, 0) + 1
+            elif result == "heap": 
+                heap_hit_freq_map[value] = heap_hit_freq_map.get(value, 0) + 1
+
+            #total_query_freq_map[value] = total_query_freq_map.get(value, 0) + 1
+
 
             update_stats(result, stats)
         if i % 1000 == 0:
             print("Done with iter {}/{}".format(i, num_iter_expensive))
-            print("Heap size = {} MB, disk size = {} MB, disk entries = {}, heap hits = {}, disk hits = {}, heap hit fraction = {}%".format(heap_tier.size() / 1024, disk_tier.size() / 1024, disk_tier.num_entries(), stats.heap_hits, stats.disk_hits, 100 * stats.heap_hits / (stats.heap_hits + stats.disk_hits)))
+            try:
+                print("Heap size = {} MB, disk size = {} MB, disk entries = {}, heap hits = {}, disk hits = {}, heap hit fraction = {}%".format(heap_tier.size() / 1024, disk_tier.size() / 1024, disk_tier.num_entries(), stats.heap_hits, stats.disk_hits, 100 * stats.heap_hits / (stats.heap_hits + stats.disk_hits)))
+            except ZeroDivisionError: 
+                pass
             #print("Found {} duplicates in heap tier".format(heap_tier.check_for_duplicates()))
     '''num_exceeding = [0, 0, 0, 0, 0]
     num_exceeding_keys = []
@@ -501,7 +562,7 @@ def test_spillover_cache(rf, repeat_supplier, num_iter_cheap, num_iter_expensive
         print("{} keys accessed > {} times from disk".format(num_exceeding[i], i))
         print("Number of keys called >2 times from disk:")
         print(num_exceeding_keys[2])'''
-    return stats, heap_tier.num_entries(), disk_tier.num_entries(), None
+    return stats, heap_tier.num_entries(), disk_tier.num_entries(), None, heap_hit_freq_map, disk_hit_freq_map#, total_query_freq_map
 
 
 
@@ -528,6 +589,19 @@ def test_main_cache(rf, repeat_supplier, num_iter_cheap, num_iter_expensive):
         if i % 1000 == 0:
             print("Done with iter {}/{}".format(i, num_iter_expensive))
     return stats, heap_tier.num_entries(), evicted_list
+
+'''def process_freq_hit_maps(heap_hit_freq_map, disk_hit_freq_map, total_query_freq_map, rf, heap_size_kb, disk_size_kb, iters, prefix, time): 
+    fn_suffix = "_{}_{}.csv".format(prefix, time)
+    for fn_prefix, map in zip(["heap", "disk", "queries"], [heap_hit_freq_map, disk_hit_freq_map, total_query_freq_map]): 
+        zipf_index_freq_map = {} # combine frequencies from all query types that share the same zipf index
+        for key, freq in map.iteritems(): 
+            key_index = int(key.split(".")[0])
+            if key_index >= 0: 
+                zipf_index_freq_map[key_index] = zipf_index_freq_map.get(key_index, freq) + freq
+        with open(fn_prefix + fn_suffix, "w") as f:
+            for key_index, total_freq '''
+
+
 
 
 
@@ -575,25 +649,45 @@ def zipf_repeat_supplier():
 # Actually test zipf spillover cache
 
 cheap_mult = 4
-num_iter = 1000000 #10000 #150000 #30000 #400000
-rf = 0.7 #0.65 #1 #0.5
+num_iter = 80_000 #10000 #150000 #30000 #400000
+rf = 0.3 #0.65 #1 #0.5
 seed = 44 #random.randint(1, 100)
-
-'''print("TESTING SPILLOVER CACHE WITH CAFFEINE")
-random.seed(seed)
-stats, heap_entries, disk_entries, disk_tier_contents = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, use_caffeine=True)
-stats.print()
-print("{} heap entries".format(heap_entries))
-print("{} disk entries".format(disk_entries))'''
+time = datetime.now().strftime("%Y_%m_%d_%H_%M")
 
 print("TESTING SPILLOVER CACHE")
 random.seed(seed)
-stats, heap_entries, disk_entries, disk_tier_contents = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, approximate_policy=False)
+stats, heap_entries, disk_entries, disk_tier_contents, heap_hit_freq_map, disk_hit_freq_map = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, approximate_policy=False, disk_evicts=True, disk_size_kb=1_000_000, use_promotion=True, promotion_threshold=5)
+stats.print()
+print("{} heap entries".format(heap_entries))
+print("{} disk entries".format(disk_entries))
+# Write frequency maps as csv
+frequency_csv = "frequency_maps/{}.csv".format(time)
+with open(frequency_csv, "w") as f: 
+    f.write("Value,Heap frequency,Disk frequency,Total frequency\n")
+    for i in range(1, zipf_N): 
+        for letter in cheap_queries + expensive_queries: 
+            val = str(i) + "." + letter
+            heap = heap_hit_freq_map.get(val, 0)
+            disk = disk_hit_freq_map.get(val, 0)
+            total = heap + disk
+            f.write("{},{},{},{}\n".format(val, heap, disk, total))
+
+
+'''print("TESTING SPILLOVER CACHE WITH CAFFEINE")
+random.seed(seed)
+stats, heap_entries, disk_entries, disk_tier_contents, heap_hit_freq_map, disk_hit_freq_map, total_query_freq_map = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, use_caffeine=True, disk_evicts=True, disk_size_kb=0)
 stats.print()
 print("{} heap entries".format(heap_entries))
 print("{} disk entries".format(disk_entries))
 
-print("TESTING MAIN CACHE")
+print("TESTING SPILLOVER CACHE")
+random.seed(seed)
+stats, heap_entries, disk_entries, disk_tier_contents, heap_hit_freq_map, disk_hit_freq_map, total_query_freq_map = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, approximate_policy=False, disk_evicts=True, disk_size_kb=0)
+stats.print()
+print("{} heap entries".format(heap_entries))
+print("{} disk entries".format(disk_entries))'''
+
+'''print("TESTING MAIN CACHE")
 random.seed(seed)
 main_stats, main_heap_entries, evicted_list = test_main_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter)
 main_stats.print(has_disk_tier=False)
@@ -610,7 +704,7 @@ random.seed(seed)
 stats, heap_entries, disk_entries, disk_tier_contents = test_spillover_cache(rf, zipf_repeat_supplier, cheap_mult*num_iter, num_iter, use_promotion=True, uses_batching=True)
 stats.print()
 print("{} heap entries".format(heap_entries))
-print("{} disk entries".format(disk_entries))
+print("{} disk entries".format(disk_entries))'''
 
 
 #print("{} heap entries".format(main_heap_entries))
