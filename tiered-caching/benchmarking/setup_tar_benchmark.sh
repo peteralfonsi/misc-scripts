@@ -61,9 +61,9 @@ release.cache = true
 EOF
 
 # unpack opensearch .tar 
-mv /tmp/opensearch-min-3.0.0-SNAPSHOT-linux-arm64.tar.gz /home/ec2-user
+mv /tmp/opensearch-min-3.0.0-SNAPSHOT-linux-x64.tar.gz /home/ec2-user
 cd /home/ec2-user/
-tar -zxvf opensearch-min-3.0.0-SNAPSHOT-linux-arm64.tar.gz
+tar -zxvf opensearch-min-3.0.0-SNAPSHOT-linux-x64.tar.gz
 
 # fill in default parts of the opensearch config 
 
