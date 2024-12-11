@@ -43,9 +43,7 @@ yes | sudo yum install make patch gcc zlib-devel openssl-devel libffi-devel read
 
 # build osb 
 cd /home/ec2-user/osb_core/opensearch-benchmark
-make prereq
 make install
-source .venv/bin/activate
 
 # delete leftover files that might be present from earlier runs 
 rm jstack-outputs/*
