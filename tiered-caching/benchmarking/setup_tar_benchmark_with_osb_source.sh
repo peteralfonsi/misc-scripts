@@ -71,7 +71,7 @@ local.dataset.cache = /home/ec2-user/.benchmark/benchmarks/data
 
 [results_publishing]
 datastore.type = opensearch
-datastore.host = search-benchmark-metrics-store-duabrmehd2byzmo47npzmqbnuy.us-east-2.es.amazonaws.com
+datastore.host = search-benchmark-metrics-small-ejyt5ebfa4va5m25ckv6m2zr44.us-east-2.es.amazonaws.com
 datastore.port = 443
 datastore.secure = True
 datastore.user = petealft
