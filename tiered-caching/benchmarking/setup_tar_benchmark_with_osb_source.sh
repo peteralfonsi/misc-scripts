@@ -39,7 +39,8 @@ curl -SL https://github.com/docker/compose/releases/download/v2.23.3/docker-comp
 chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
 
 # install other dependencies
-yes | sudo yum install make patch gcc zlib-devel openssl-devel libffi-devel readline-devel sqlite-devel ncurses-devel xz-devel tk-devel
+#yes | sudo yum install make patch gcc zlib-devel openssl-devel libffi-devel readline-devel sqlite-devel ncurses-devel xz-devel tk-devel
+yes | sudo yum -y install make gcc openssl-devel bzip2-devel libffi-devel ncurses-devel sqlite-devel readline-devel zlib-devel xz-devel
 
 # build osb 
 cd /home/ec2-user/osb_core/opensearch-benchmark
