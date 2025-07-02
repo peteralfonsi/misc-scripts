@@ -68,9 +68,9 @@ release.cache = true
 EOF
 
 # unpack opensearch .tar 
-mv /tmp/opensearch-min-3.1.0-SNAPSHOT-linux-x64.tar.gz /home/ec2-user
+mv /tmp/opensearch-min-2.0-SNAPSHOT-linux-x64.tar.gz /home/ec2-user
 cd /home/ec2-user/
-tar -zxvf opensearch-min-3.1.0-SNAPSHOT-linux-x64.tar.gz
+tar -zxvf opensearch-min-3.2.0-SNAPSHOT-linux-x64.tar.gz
 
 # set vmmaps to minimum value 
 echo vm.max_map_count = 262144 | sudo tee -a /etc/sysctl.conf > /dev/null
